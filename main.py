@@ -2,7 +2,8 @@ from fastapi import FastAPI, Query, Response, status
 
 app = FastAPI()
 
-# Initial data
+# ===================== DATA =====================
+
 products = [
     {"id": 1, "name": "Wireless Mouse", "price": 499, "category": "Electronics", "in_stock": True},
     {"id": 2, "name": "Notebook", "price": 99, "category": "Stationery", "in_stock": True},
@@ -10,19 +11,22 @@ products = [
     {"id": 4, "name": "Pen Set", "price": 49, "category": "Stationery", "in_stock": True},
 ]
 
-# Helper function
+orders = []
+
+# ===================== HELPER =====================
+
 def find_product(product_id):
     for p in products:
         if p["id"] == product_id:
             return p
     return None
 
-# ===================== GET ALL =====================
+# ===================== PRODUCTS =====================
+
 @app.get("/products")
 def get_products():
     return {"products": products, "total": len(products)}
 
-# ===================== GET ONE =====================
 @app.get("/products/{product_id}")
 def get_product(product_id: int, response: Response):
     product = find_product(product_id)
@@ -31,109 +35,134 @@ def get_product(product_id: int, response: Response):
         return {"error": "Product not found"}
     return product
 
-# ===================== POST =====================
-@app.post("/products", status_code=201)
-def add_product(product: dict, response: Response):
-    # Duplicate check
-    for p in products:
-        if p["name"].lower() == product["name"].lower():
-            response.status_code = status.HTTP_400_BAD_REQUEST
-            return {"error": "Product with this name already exists"}
+# ===================== SEARCH =====================
 
-    new_id = max(p["id"] for p in products) + 1
+@app.get("/products/search")
+def search_products(keyword: str = Query(...)):
+    result = [
+        p for p in products
+        if keyword.lower() in p["name"].lower()
+    ]
 
-    new_product = {
-        "id": new_id,
-        "name": product["name"],
-        "price": product["price"],
-        "category": product["category"],
-        "in_stock": product.get("in_stock", True)
-    }
+    if not result:
+        return {"message": f"No products found for: {keyword}"}
 
-    products.append(new_product)
+    return {"keyword": keyword, "total_found": len(result), "products": result}
 
-    return {
-        "message": "Product added",
-        "product": new_product
-    }
+# ===================== SORT =====================
 
-# ===================== PUT =====================
-@app.put("/products/{product_id}")
-def update_product(
-    product_id: int,
-    price: int = None,
-    in_stock: bool = None,
-    response: Response = None
+@app.get("/products/sort")
+def sort_products(
+    sort_by: str = Query("price"),
+    order: str = Query("asc")
 ):
-    product = find_product(product_id)
+    if sort_by not in ["price", "name"]:
+        return {"error": "sort_by must be 'price' or 'name'"}
 
-    if not product:
-        response.status_code = status.HTTP_404_NOT_FOUND
-        return {"error": "Product not found"}
+    result = sorted(products, key=lambda p: p[sort_by], reverse=(order == "desc"))
 
-    if price is not None:
-        product["price"] = price
+    return {"sort_by": sort_by, "order": order, "products": result}
 
-    if in_stock is not None:
-        product["in_stock"] = in_stock
+# ===================== PAGINATION =====================
+
+@app.get("/products/page")
+def paginate_products(
+    page: int = Query(1, ge=1),
+    limit: int = Query(2, ge=1)
+):
+    start = (page - 1) * limit
 
     return {
-        "message": "Product updated",
-        "product": product
+        "page": page,
+        "limit": limit,
+        "total": len(products),
+        "total_pages": -(-len(products) // limit),
+        "products": products[start:start + limit]
     }
 
-# ===================== DELETE =====================
-@app.delete("/products/{product_id}")
-def delete_product(product_id: int, response: Response):
-    product = find_product(product_id)
+# ===================== ORDERS =====================
 
-    if not product:
-        response.status_code = status.HTTP_404_NOT_FOUND
-        return {"error": "Product not found"}
+@app.post("/orders")
+def create_order(order: dict):
+    order_id = len(orders) + 1
+    order["order_id"] = order_id
+    orders.append(order)
+    return {"message": "Order placed", "order": order}
 
-    products.remove(product)
+# ===================== Q4 =====================
 
-    return {"message": f"Product '{product['name']}' deleted"}
+@app.get("/orders/search")
+def search_orders(customer_name: str = Query(...)):
+    result = [
+        o for o in orders
+        if customer_name.lower() in o["customer_name"].lower()
+    ]
 
-# ===================== AUDIT (Q5) =====================
-@app.get("/products/audit")
-def product_audit():
-    in_stock_list = [p for p in products if p["in_stock"]]
-    out_stock_list = [p for p in products if not p["in_stock"]]
+    if not result:
+        return {"message": f"No orders found for: {customer_name}"}
 
-    total_value = sum(p["price"] * 10 for p in in_stock_list)
+    return {"customer_name": customer_name, "total_found": len(result), "orders": result}
 
-    most_expensive = max(products, key=lambda p: p["price"])
+# ===================== Q5 =====================
+
+@app.get("/products/sort-by-category")
+def sort_by_category():
+    result = sorted(products, key=lambda p: (p["category"], p["price"]))
+
+    return {"products": result, "total": len(result)}
+
+# ===================== Q6 =====================
+
+@app.get("/products/browse")
+def browse_products(
+    keyword: str = Query(None),
+    sort_by: str = Query("price"),
+    order: str = Query("asc"),
+    page: int = Query(1, ge=1),
+    limit: int = Query(4, ge=1, le=20),
+):
+    result = products
+
+    # SEARCH
+    if keyword:
+        result = [
+            p for p in result
+            if keyword.lower() in p["name"].lower()
+        ]
+
+    # SORT
+    if sort_by in ["price", "name"]:
+        result = sorted(result, key=lambda p: p[sort_by], reverse=(order == "desc"))
+
+    # PAGINATION
+    total = len(result)
+    start = (page - 1) * limit
+    paged = result[start:start + limit]
 
     return {
-        "total_products": len(products),
-        "in_stock_count": len(in_stock_list),
-        "out_of_stock_names": [p["name"] for p in out_stock_list],
-        "total_stock_value": total_value,
-        "most_expensive": {
-            "name": most_expensive["name"],
-            "price": most_expensive["price"]
-        }
+        "keyword": keyword,
+        "sort_by": sort_by,
+        "order": order,
+        "page": page,
+        "limit": limit,
+        "total_found": total,
+        "total_pages": -(-total // limit),
+        "products": paged
     }
 
 # ===================== BONUS =====================
-@app.put("/products/discount")
-def apply_discount(
-    category: str = Query(...),
-    discount_percent: int = Query(..., ge=1, le=99)
+
+@app.get("/orders/page")
+def get_orders_page(
+    page: int = Query(1, ge=1),
+    limit: int = Query(3, ge=1)
 ):
-    updated = []
-
-    for p in products:
-        if p["category"] == category:
-            p["price"] = int(p["price"] * (1 - discount_percent / 100))
-            updated.append(p)
-
-    if not updated:
-        return {"message": f"No products found in category: {category}"}
+    start = (page - 1) * limit
 
     return {
-        "message": f"{discount_percent}% discount applied to {category}",
-        "updated_count": len(updated),
-        "updated_products": updated
+        "page": page,
+        "limit": limit,
+        "total": len(orders),
+        "total_pages": -(-len(orders) // limit),
+        "orders": orders[start:start + limit]
     }
